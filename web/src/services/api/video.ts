@@ -27,8 +27,11 @@ type RequestOptions = { signal?: AbortSignal };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "plugin"; model: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "local" | "plugin"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+
+type LocalTaskOutput = { asset?: { id?: string; url?: string; content_type?: string } | null };
+type LocalTask = VideoResponse & { status?: string; outputs?: LocalTaskOutput[] };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -46,7 +49,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    const delayMs = task.provider === "seedance" ? 5000 : 2500;
+    const delayMs = task.provider === "openai" ? 2500 : 5000;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
@@ -67,6 +70,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
+    if (requestConfig.apiFormat === "local") {
+        return createLocalVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
     if (videoReferences.length || audioReferences.length) {
         throw new Error(apiText("videoReferencesUnsupported"));
     }
@@ -80,6 +86,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
+    if (task.provider === "local") return pollLocalVideoTask(requestConfig, task, options);
     return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
 }
 
@@ -164,6 +171,62 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
             return { status: "completed", result: { blob: content.data } };
         }
         if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
+        return { status: "pending" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
+    }
+}
+
+/** Local self-hosted generation service: POST /videos/generations + GET /tasks/{id}, assets uploaded via /assets. */
+function localHeaders(config: AiConfig, contentType?: string) {
+    return {
+        ...(config.apiKey.trim() ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        ...(contentType ? { "Content-Type": contentType } : {}),
+    };
+}
+
+async function createLocalVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (videoReferences.length || audioReferences.length) throw new Error(apiText("videoReferencesUnsupported"));
+    try {
+        const assetIds = await Promise.all(references.slice(0, 7).map((image) => uploadLocalAsset(config, image, options)));
+        const payload: Record<string, unknown> = {
+            model: modelOptionName(model),
+            prompt,
+            duration_seconds: Number(normalizeVideoSeconds(config.videoSeconds)),
+        };
+        const sizeValue = (config.size || "").trim();
+        if (/^\d+x\d+$/.test(sizeValue)) payload.size = sizeValue;
+        else if (/^\d+:\d+$/.test(sizeValue)) payload.aspect_ratio = sizeValue;
+        // 单图作为参考图（ref2v）；多图按首帧/尾帧语义传递
+        if (assetIds.length === 1) payload.input_asset_id = assetIds[0];
+        if (assetIds.length >= 2) {
+            payload.first_frame_asset_id = assetIds[0];
+            payload.last_frame_asset_id = assetIds[assetIds.length - 1];
+        }
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos/generations"), payload, { headers: localHeaders(config, "application/json"), signal: options?.signal })).data);
+        if (!created.id) throw new Error(apiText("noVideoTaskId"));
+        return { id: created.id, provider: "local", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
+async function uploadLocalAsset(config: AiConfig, image: ReferenceImage, options?: RequestOptions) {
+    const form = new FormData();
+    form.append("file", dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) }));
+    form.append("kind", "image");
+    const asset = (await axios.post<{ id?: string }>(aiApiUrl(config, "/assets"), form, { headers: localHeaders(config), signal: options?.signal })).data;
+    if (!asset?.id) throw new Error(apiText("referenceImageReadFailed"));
+    return asset.id;
+}
+
+async function pollLocalVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const state = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/tasks/${encodeURIComponent(task.id)}`), { headers: localHeaders(config), signal: options?.signal })).data) as LocalTask;
+        const url = (state.outputs || []).map((output) => output.asset?.url).find((value): value is string => typeof value === "string" && isPublicMediaUrl(value));
+        if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
+        if (state.status === "succeeded") return { status: "failed", error: apiText("seedanceNoVideoUrl") };
+        if (state.status === "failed" || state.status === "canceled" || state.status === "cancelled") return { status: "failed", error: readApiErrorMessage(state.error) || apiText("videoGenerationFailed") };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
@@ -292,7 +355,7 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
 function assertVideoConfig(config: AiConfig, model: string) {
     if (!model) throw new Error(apiText("videoModelRequired"));
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
-    if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
+    if (config.apiFormat !== "local" && !config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
     if (config.apiFormat === "gemini") throw new Error(apiText("geminiVideoUnsupported"));
 }
 

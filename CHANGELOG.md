@@ -3,6 +3,7 @@
 ## Unreleased
 
 + [新增] 提示词来源新增 Freestylefly GPT Image 2 内置来源。
++ [新增] 视频模型渠道新增「本地服务」协议，可直接接入自建的 OpenAI 风格本地生成网关（`/v1/videos/generations` + `/v1/tasks`），支持参考图上传、免 API Key 与任务刷新恢复。
 
 ## v0.15.1 - 2026-08-07
 

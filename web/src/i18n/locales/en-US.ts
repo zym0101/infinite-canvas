@@ -572,6 +572,7 @@ export default {
         },
         protocols: {
             ark: "Volcengine Ark",
+            local: "Local Service",
         },
     },
     agent: {

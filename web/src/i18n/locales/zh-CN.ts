@@ -572,6 +572,7 @@ export default {
         },
         protocols: {
             ark: "火山方舟",
+            local: "本地服务",
         },
     },
     agent: {
