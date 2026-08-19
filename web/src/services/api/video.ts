@@ -215,12 +215,17 @@ async function createLocalVideoTask(config: AiConfig, model: string, prompt: str
         if (/^\d+x\d+$/.test(sizeValue)) payload.size = sizeValue;
         const aspectRatio = localAspectRatioOption(sizeValue);
         if (aspectRatio) payload.aspect_ratio = aspectRatio;
-        // 单图作为参考图（ref2v）；多图按首帧/尾帧语义传递
-        if (assetIds.length === 1) payload.input_asset_id = assetIds[0];
+        // 单图同时按参考图（ref2v）和首帧（fl2v）两种语义传递，由模型工作流绑定决定使用哪个；多图按首帧/尾帧
+        if (assetIds.length === 1) {
+            payload.input_asset_id = assetIds[0];
+            payload.first_frame_asset_id = assetIds[0];
+        }
         if (assetIds.length >= 2) {
             payload.first_frame_asset_id = assetIds[0];
             payload.last_frame_asset_id = assetIds[assetIds.length - 1];
         }
+        // 完整参考图列表供多参考模型使用（服务端与单图字段去重合并）
+        if (assetIds.length) payload.reference_image_asset_ids = assetIds;
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos/generations"), payload, { headers: localHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
         return { id: created.id, provider: "local", model };
