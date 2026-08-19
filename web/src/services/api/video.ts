@@ -185,6 +185,40 @@ function localHeaders(config: AiConfig, contentType?: string) {
     };
 }
 
+// ComfyUI ResolutionSelector 的画幅枚举值（H3 工作流使用）。
+const LOCAL_ASPECT_OPTIONS = [
+    ["1:1", "1:1 (Square)", 1],
+    ["2:3", "2:3 (Portrait Photo)", 2 / 3],
+    ["3:2", "3:2 (Photo)", 3 / 2],
+    ["3:4", "3:4 (Portrait Standard)", 3 / 4],
+    ["4:3", "4:3 (Standard)", 4 / 3],
+    ["9:16", "9:16 (Portrait Widescreen)", 9 / 16],
+    ["16:9", "16:9 (Widescreen)", 16 / 9],
+    ["21:9", "21:9 (Ultrawide)", 21 / 9],
+] as const;
+
+/** Map a canvas size ("1280x720" or "16:9") to the nearest ResolutionSelector combo value. */
+function localAspectRatioOption(sizeValue: string) {
+    let ratio = 0;
+    const pixels = sizeValue.match(/^(\d+)x(\d+)$/);
+    if (pixels) ratio = Number(pixels[1]) / Number(pixels[2]);
+    else {
+        const plain = sizeValue.match(/^(\d+):(\d+)$/);
+        if (plain) ratio = Number(plain[1]) / Number(plain[2]);
+    }
+    if (!ratio) return undefined;
+    let best: string | undefined;
+    let bestDistance = Infinity;
+    for (const [, option, value] of LOCAL_ASPECT_OPTIONS) {
+        const distance = Math.abs(Math.log(ratio / value));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = option;
+        }
+    }
+    return best;
+}
+
 async function createLocalVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error(apiText("videoReferencesUnsupported"));
     try {
@@ -192,11 +226,14 @@ async function createLocalVideoTask(config: AiConfig, model: string, prompt: str
         const payload: Record<string, unknown> = {
             model: modelOptionName(model),
             prompt,
-            duration_seconds: Number(normalizeVideoSeconds(config.videoSeconds)),
+            // sage 量化注意力在 13s 以上的两次采样工作流中崩坏，本地模型统一卡 12s 上限
+            duration_seconds: Math.min(12, Number(normalizeVideoSeconds(config.videoSeconds))),
+            seed: Math.floor(Math.random() * 2 ** 31),
         };
         const sizeValue = (config.size || "").trim();
         if (/^\d+x\d+$/.test(sizeValue)) payload.size = sizeValue;
-        else if (/^\d+:\d+$/.test(sizeValue)) payload.aspect_ratio = sizeValue;
+        const aspectRatio = localAspectRatioOption(sizeValue);
+        if (aspectRatio) payload.aspect_ratio = aspectRatio;
         // 单图作为参考图（ref2v）；多图按首帧/尾帧语义传递
         if (assetIds.length === 1) payload.input_asset_id = assetIds[0];
         if (assetIds.length >= 2) {
