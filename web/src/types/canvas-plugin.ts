@@ -19,6 +19,13 @@ export type GenerateTextResult = { text: string };
 export type PluginModelCapability = "image" | "video" | "text" | "audio";
 export type ModelOption = { value: string; label: string };
 
+export type StoredPluginMedia = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+export type CanvasPluginMedia = {
+    readImage: (input: { url?: string; storageKey?: string }) => Promise<string>;
+    storeImage: (input: string | Blob) => Promise<StoredPluginMedia>;
+    storeVideo: (input: string | Blob) => Promise<StoredPluginMedia>;
+};
+
 export type CanvasPluginAi = {
     generateImage: (prompt: string, options?: GenerateImageOptions) => Promise<GenerateImageResult>;
     generateVideo: (prompt: string, options?: GenerateVideoOptions) => Promise<GenerateVideoResult>;
@@ -60,6 +67,8 @@ export type CanvasNodeContext = {
     on: (event: string, handler: (payload: unknown) => void) => () => void;
     // AI image, video, and text generation using the host model configuration.
     ai: CanvasPluginAi;
+    // Persist plugin-produced image/video blobs in the host's local media stores.
+    media: CanvasPluginMedia;
     // Opens or closes the custom panel below this node; the definition must provide a Panel.
     openPanel: () => void;
     closePanel: () => void;
@@ -85,6 +94,7 @@ export type CanvasPluginHost = {
     applyOps: (ops: CanvasAgentOp[]) => void;
     // AI generation using the current canvas model and credential configuration.
     ai: CanvasPluginAi;
+    media: CanvasPluginMedia;
     // Opens or closes the custom panel below a specified node.
     openPanel: (nodeId: string) => void;
     closePanel: () => void;

@@ -25,6 +25,15 @@ export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
+export type CanvasGenerationTask = {
+    id: string;
+    provider: "openai" | "local" | "plugin";
+    model: string;
+    baseUrl?: string;
+    status: "queued" | "running" | "canceling";
+    phase?: string;
+};
+
 export type CanvasNodeImage = {
     id: string;
     status: CanvasNodeStatus;
@@ -61,6 +70,7 @@ export type CanvasNodeMetadata = {
     audioFormat?: string;
     audioSpeed?: string;
     audioInstructions?: string;
+    generationTask?: CanvasGenerationTask;
     references?: string[];
     naturalWidth?: number;
     naturalHeight?: number;

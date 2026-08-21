@@ -1,25 +1,27 @@
 import { PLUGIN_REGISTRY_URL } from "@/constant/env";
 
-// An official registry item whose entry has been resolved to an absolute URL.
-export type OfficialPluginEntry = {
+// A registry item whose relative entry has been resolved to an absolute URL.
+export type PluginRegistryEntry = {
     id: string;
     name: string;
     version: string;
     description?: string;
     icon?: string;
     url: string;
+    official: boolean;
+    license?: string;
+    repository?: string;
 };
 
-type RawEntry = { id?: string; name?: string; version?: string; description?: string; icon?: string; entry?: string; url?: string };
-type RawManifest = { plugins?: RawEntry[] };
+type RawEntry = { id?: string; name?: string; version?: string; description?: string; icon?: string; entry?: string; url?: string; license?: string; repository?: string };
+type RawManifest = { plugins?: RawEntry[]; recommended?: RawEntry[] };
 
-// Fetch the official registry and resolve relative entries against its URL for the existing URL installation flow.
-export async function fetchOfficialPlugins(registryUrl: string = PLUGIN_REGISTRY_URL): Promise<OfficialPluginEntry[]> {
+// Fetch official and recommended third-party entries. Recommended entries remain third-party when installed.
+export async function fetchPluginRegistry(registryUrl: string = PLUGIN_REGISTRY_URL): Promise<PluginRegistryEntry[]> {
     const response = await fetch(registryUrl, { headers: { accept: "application/json" } });
     if (!response.ok) throw new Error(i18n.t("canvas.pluginErrors.registryFailed", { status: response.status }));
     const data = (await response.json()) as RawManifest;
-    const list = Array.isArray(data?.plugins) ? data.plugins : [];
-    return list
+    const normalize = (items: RawEntry[] | undefined, official: boolean) => (Array.isArray(items) ? items : [])
         .filter((item): item is RawEntry & { id: string } => Boolean(item && item.id && (item.entry || item.url)))
         .map((item) => ({
             id: item.id,
@@ -28,7 +30,11 @@ export async function fetchOfficialPlugins(registryUrl: string = PLUGIN_REGISTRY
             description: item.description,
             icon: item.icon,
             url: item.url ? item.url : new URL(item.entry as string, registryUrl).toString(),
+            official,
+            license: item.license,
+            repository: item.repository,
         }));
+    return [...normalize(data.plugins, true), ...normalize(data.recommended, false)];
 }
 
 // Compare semantic versions: positive means a is newer, negative means b is newer, and zero means equal.

@@ -112,19 +112,19 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) =>
-        node.metadata?.status === "loading"
-            ? {
-                  ...node,
-                  metadata: {
-                      ...node.metadata,
-                      status: "error" as const,
-                      errorDetails: i18n.t("canvas.generation.interrupted"),
-                      images: node.metadata.images?.map((image) => (image.status === "loading" ? { ...image, status: "error" as const, errorDetails: i18n.t("canvas.generation.interrupted") } : image)),
-                  },
-              }
-            : node,
-    );
+    return nodes.map((node) => {
+        if (node.metadata?.status !== "loading") return node;
+        if (node.type === CanvasNodeType.Video && node.metadata.generationTask?.provider === "local" && node.metadata.generationTask.id) return node;
+        return {
+            ...node,
+            metadata: {
+                ...node.metadata,
+                status: "error" as const,
+                errorDetails: i18n.t("canvas.generation.interrupted"),
+                images: node.metadata.images?.map((image) => (image.status === "loading" ? { ...image, status: "error" as const, errorDetails: i18n.t("canvas.generation.interrupted") } : image)),
+            },
+        };
+    });
 }
 
 export function isGenerationCanceled(error: unknown) {

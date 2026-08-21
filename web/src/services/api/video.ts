@@ -13,14 +13,18 @@ type VideoResponse = { id: string; status?: string; error?: { message?: string }
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
+type WaitOptions = RequestOptions & { onState?: (state: VideoGenerationTaskState) => void };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "local" | "plugin"; model: string };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "local" | "plugin"; model: string; baseUrl?: string };
+export type VideoGenerationTaskState =
+    | { status: "pending"; remoteStatus?: string; phase?: string; progress?: number }
+    | { status: "completed"; result: VideoGenerationResult }
+    | { status: "failed"; error: string };
 
 type LocalTaskOutput = { asset?: { id?: string; url?: string; content_type?: string } | null };
-type LocalTask = VideoResponse & { status?: string; outputs?: LocalTaskOutput[] };
+type LocalTask = VideoResponse & { status?: string; phase?: string; progress?: number; outputs?: LocalTaskOutput[] };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -38,11 +42,15 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, options);
-    // 本地服务（GPU 生成 + 排队）可能需要数十分钟，给足 40 分钟预算；云端接口维持 5 分钟
+    return waitVideoGenerationTask(config, task, options);
+}
+
+export async function waitVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: WaitOptions): Promise<VideoGenerationResult> {
     const maxAttempts = task.provider === "local" ? 960 : 120;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
+        options?.onState?.(state);
         if (state.status === "completed") return state.result;
         if (state.status === "failed") throw new Error(state.error);
         if (attempt === maxAttempts - 1) throw new Error(apiText("videoTimeout", { provider: "" }));
@@ -68,10 +76,19 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
         const result = pluginVideoResults.get(task.id);
         return result ? { status: "completed", result } : { status: "failed", error: apiText("pluginVideoExpired") };
     }
-    const requestConfig = resolveModelRequestConfig(config, task.model);
+    const resolvedConfig = resolveModelRequestConfig(config, task.model);
+    const requestConfig = task.baseUrl ? { ...resolvedConfig, baseUrl: task.baseUrl, ...(task.provider === "local" ? { apiFormat: "local" as const } : {}) } : resolvedConfig;
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "local") return pollLocalVideoTask(requestConfig, task, options);
     return pollOpenAIVideoTask(requestConfig, task, options);
+}
+
+export async function cancelVideoGenerationTask(config: AiConfig, task: VideoGenerationTask) {
+    if (task.provider !== "local") return false;
+    const resolvedConfig = resolveModelRequestConfig(config, task.model);
+    const requestConfig = { ...resolvedConfig, baseUrl: task.baseUrl || resolvedConfig.baseUrl, apiFormat: "local" as const };
+    await axios.post(aiApiUrl(requestConfig, `/tasks/${encodeURIComponent(task.id)}/cancel`), undefined, { headers: localHeaders(requestConfig) });
+    return true;
 }
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
@@ -98,7 +115,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
     );
     const id = nanoid();
     pluginVideoResults.set(id, result);
-    return { id, provider: "plugin", model };
+    return { id, provider: "plugin", model, baseUrl: config.baseUrl };
 }
 
 function videoPluginResult(result: unknown): VideoGenerationResult {
@@ -138,7 +155,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "openai", model };
+        return { id: created.id, provider: "openai", model, baseUrl: config.baseUrl };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -230,7 +247,7 @@ async function createLocalVideoTask(config: AiConfig, model: string, prompt: str
         if (assetIds.length) payload.reference_image_asset_ids = assetIds;
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos/generations"), payload, { headers: localHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "local", model };
+        return { id: created.id, provider: "local", model, baseUrl: config.baseUrl };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -252,7 +269,7 @@ async function pollLocalVideoTask(config: AiConfig, task: VideoGenerationTask, o
         if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
         if (state.status === "succeeded") return { status: "failed", error: apiText("noPlayableVideo") };
         if (state.status === "failed" || state.status === "canceled" || state.status === "cancelled") return { status: "failed", error: readApiErrorMessage(state.error) || apiText("videoGenerationFailed") };
-        return { status: "pending" };
+        return { status: "pending", remoteStatus: state.status, phase: state.phase, progress: state.progress };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
     }

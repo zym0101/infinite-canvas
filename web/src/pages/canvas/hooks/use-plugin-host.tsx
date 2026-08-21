@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 
 import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+import { uploadMediaFile } from "@/services/file-storage";
+import { imageToDataUrl, uploadImage } from "@/services/image-storage";
 import { decodeChannelModel, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
@@ -98,6 +100,11 @@ export function usePluginHost(params: PluginHostParams) {
             updateNode: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, ...patch } : node))),
             updateMetadata: (nodeId, patch) => setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...patch } } : node))),
             applyOps: (ops) => applyAgentOps(ops),
+            media: {
+                readImage: async (input) => imageToDataUrl(input),
+                storeImage: async (input) => uploadImage(input),
+                storeVideo: async (input) => uploadMediaFile(input, "video"),
+            },
             ai: pluginAi,
             openPanel: (nodeId) => setDialogNodeId(nodeId),
             closePanel: () => setDialogNodeId(null),

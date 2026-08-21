@@ -199,6 +199,13 @@ export type CanvasPluginAi = {
     defaultModel: (capability: ModelCapability) => string;
 };
 
+export type StoredPluginMedia = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+export type CanvasPluginMedia = {
+    readImage: (input: { url?: string; storageKey?: string }) => Promise<string>;
+    storeImage: (input: string | Blob) => Promise<StoredPluginMedia>;
+    storeVideo: (input: string | Blob) => Promise<StoredPluginMedia>;
+};
+
 // ---------------------------------------------------------------------------
 // 节点上下文:每个节点渲染时注入,是插件与画布交互的核心接口
 // ---------------------------------------------------------------------------
@@ -230,6 +237,8 @@ export type CanvasNodeContext = {
     on: (event: string, handler: (payload: unknown) => void) => () => void;
     // AI 生成能力(生图/生视频/生文本),复用宿主模型配置
     ai: CanvasPluginAi;
+    // 将插件产生的图片/视频写入宿主 localforage,返回可直接用于节点 metadata 的信息
+    media: CanvasPluginMedia;
     // 打开/关闭本节点下方的自定义 Panel(需在节点定义里提供 Panel)
     openPanel: () => void;
     closePanel: () => void;

@@ -22,6 +22,20 @@ const OFFICIAL = [
     { id: "sticky-note", dir: "sticky-note", name: "便利贴节点", description: "可自选颜色、双击编辑、拖动即可移动的便利贴", icon: "📌" },
 ];
 
+// 推荐第三方插件只登记固定版本 URL，不参与官方插件构建，也不会标记为官方来源。
+const RECOMMENDED = [
+    {
+        id: "director",
+        name: "3D 导演台",
+        version: "0.1.1",
+        description: "连接画布图片，在 3D 空间中搭建场景并输出多视角截图",
+        icon: "🎬",
+        url: "https://cdn.jsdelivr.net/gh/esncy/infinite-canvas-director-plugin@v0.1.1/dist/director.js",
+        license: "AGPL-3.0",
+        repository: "https://github.com/esncy/infinite-canvas-director-plugin",
+    },
+];
+
 // 读取插件 package.json 的 version 作为清单版本的唯一来源
 async function readPluginVersion(dir) {
     const pkg = JSON.parse(await readFile(join(root, "..", dir, "package.json"), "utf8"));
@@ -64,6 +78,7 @@ const manifest = {
             entry: `${plugin.id}.js`,
         })),
     ),
+    recommended: RECOMMENDED,
 };
 await writeFile(join(outDir, "official-plugins.json"), JSON.stringify(manifest, null, 4) + "\n");
-console.log(`wrote official-plugins.json (${OFFICIAL.length} plugins) → dist/`);
+console.log(`wrote official-plugins.json (${OFFICIAL.length} official, ${RECOMMENDED.length} recommended) → dist/`);

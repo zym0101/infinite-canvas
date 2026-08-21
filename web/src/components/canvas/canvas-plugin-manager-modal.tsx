@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
-import { fetchOfficialPlugins, hasUpgrade, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
+import { fetchPluginRegistry, hasUpgrade, type PluginRegistryEntry } from "@/lib/canvas/plugin-registry";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 
@@ -18,30 +18,30 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const [installing, setInstalling] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
 
-    const [official, setOfficial] = useState<OfficialPluginEntry[]>([]);
-    const [loadingOfficial, setLoadingOfficial] = useState(false);
-    const [officialError, setOfficialError] = useState<string | null>(null);
+    const [registry, setRegistry] = useState<PluginRegistryEntry[]>([]);
+    const [loadingRegistry, setLoadingRegistry] = useState(false);
+    const [registryError, setRegistryError] = useState<string | null>(null);
 
     const recordById = useMemo(() => new Map(plugins.map((item) => [item.id, item])), [plugins]);
     const localPlugins = useMemo(() => plugins.filter((item) => item.local), [plugins]);
     const thirdPartyPlugins = useMemo(() => plugins.filter((item) => !item.local && !item.official), [plugins]);
 
-    const loadOfficial = useCallback(async () => {
-        setLoadingOfficial(true);
-        setOfficialError(null);
+    const loadRegistry = useCallback(async () => {
+        setLoadingRegistry(true);
+        setRegistryError(null);
         try {
-            setOfficial(await fetchOfficialPlugins());
+            setRegistry(await fetchPluginRegistry());
         } catch (error) {
-            setOfficialError(error instanceof Error ? error.message : String(error));
+            setRegistryError(error instanceof Error ? error.message : String(error));
         } finally {
-            setLoadingOfficial(false);
+            setLoadingRegistry(false);
         }
     }, []);
 
-    // Fetch the official registry when opening the panel, but only if it has not been loaded yet.
+    // Fetch the plugin registry when opening the panel, but only if it has not been loaded yet.
     useEffect(() => {
-        if (open && official.length === 0 && !loadingOfficial && !officialError) void loadOfficial();
-    }, [open, official.length, loadingOfficial, officialError, loadOfficial]);
+        if (open && registry.length === 0 && !loadingRegistry && !registryError) void loadRegistry();
+    }, [open, registry.length, loadingRegistry, registryError, loadRegistry]);
 
     const handleInstallUrl = async () => {
         const target = url.trim();
@@ -58,10 +58,10 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
         }
     };
 
-    const handleInstallOfficial = async (entry: OfficialPluginEntry) => {
+    const handleInstallRegistry = async (entry: PluginRegistryEntry) => {
         setBusyId(entry.id);
         try {
-            const plugin = await installPluginFromUrl(entry.url, { official: true });
+            const plugin = await installPluginFromUrl(entry.url, { official: entry.official });
             message.success(t("canvas.plugins.installed", { name: plugin.name }));
         } catch (error) {
             message.error(t("canvas.plugins.installFailed", { error: error instanceof Error ? error.message : String(error) }));
@@ -127,7 +127,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     // Shared plugin row: icon, title with name and version, description, and actions.
-    const row = (key: string, icon: ReactNode, name: string, version: string, subtitle: string | undefined, right: ReactNode) => (
+    const row = (key: string, icon: ReactNode, name: string, version: string, subtitle: ReactNode, right: ReactNode) => (
         <div key={key} className="flex items-center gap-3 rounded-xl border px-3 py-2.5" style={{ borderColor: theme.node.stroke, background: theme.node.fill }}>
             <span className="grid size-9 shrink-0 place-items-center rounded-lg text-base" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
                 {icon}
@@ -137,52 +137,57 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
                     <span className="truncate">{name}</span>
                     {versionTag(version)}
                 </div>
-                {subtitle ? (
-                    <div className="mt-0.5 truncate text-xs" style={{ color: theme.node.muted }}>
-                        {subtitle}
-                    </div>
-                ) : null}
+                {subtitle ? <div className="mt-0.5 min-w-0 text-xs" style={{ color: theme.node.muted }}>{subtitle}</div> : null}
             </div>
             {right}
         </div>
     );
 
-    const officialTab = (
+
+    const registryTab = (
         <div className="space-y-2">
             <div className="flex items-center justify-between">
                 <div className="text-xs" style={{ color: theme.node.muted }}>
-                    {t("canvas.plugins.officialDescription")}
+                    {t("canvas.plugins.registryDescription")}
                 </div>
-                <Button type="text" size="small" icon={<RefreshCw className={`size-4 ${loadingOfficial ? "animate-spin" : ""}`} />} onClick={loadOfficial} disabled={loadingOfficial}>
+                <Button type="text" size="small" icon={<RefreshCw className={`size-4 ${loadingRegistry ? "animate-spin" : ""}`} />} onClick={loadRegistry} disabled={loadingRegistry}>
                     {t("canvas.plugins.refresh")}
                 </Button>
             </div>
-            {officialError ? (
+            {registryError ? (
                 <div className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: theme.node.stroke, color: theme.node.muted }}>
-                    {t("canvas.plugins.loadFailed", { error: officialError })}
+                    {t("canvas.plugins.loadFailed", { error: registryError })}
                 </div>
-            ) : loadingOfficial && official.length === 0 ? (
-                emptyHint(t("canvas.plugins.loadingOfficial"))
-            ) : official.length === 0 ? (
-                emptyHint(t("canvas.plugins.noOfficial"))
+            ) : loadingRegistry && registry.length === 0 ? (
+                emptyHint(t("canvas.plugins.loadingRegistry"))
+            ) : registry.length === 0 ? (
+                emptyHint(t("canvas.plugins.noRegistryPlugins"))
             ) : (
                 <div className="thin-scrollbar max-h-[46vh] space-y-2 overflow-auto">
-                    {official.map((entry) => {
+                    {registry.map((entry) => {
                         const record = recordById.get(entry.id);
-                        // Show the update dot and highlight the action when the remote version is newer.
                         const upgradable = Boolean(record && hasUpgrade(record.version, entry.version));
                         const icon = entry.icon || <Puzzle className="size-4" />;
+                        const subtitle = entry.official ? entry.description : (
+                            <div className="min-w-0">
+                                <div className="truncate">{entry.description}</div>
+                                <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                                    <span>{t("canvas.plugins.recommendedThirdParty")}</span>
+                                    {entry.license ? <span>· {entry.license}</span> : null}
+                                    {entry.repository ? <a className="truncate underline" href={entry.repository} target="_blank" rel="noreferrer">· GitHub</a> : null}
+                                </div>
+                            </div>
+                        );
                         return row(
                             entry.id,
                             upgradable ? withUpgradeDot(icon) : icon,
                             entry.name,
-                            // Show local and remote versions in the title so the update target is explicit.
                             upgradable && record ? `${record.version} → ${entry.version}` : entry.version,
-                            entry.description,
+                            subtitle,
                             record ? (
                                 installedControls(record, upgradable)
                             ) : (
-                                <Button type="primary" size="small" icon={<Download className="size-4" />} loading={busyId === entry.id} onClick={() => handleInstallOfficial(entry)}>
+                                <Button type="primary" size="small" icon={<Download className="size-4" />} loading={busyId === entry.id} onClick={() => handleInstallRegistry(entry)}>
                                     {t("canvas.plugins.install")}
                                 </Button>
                             ),
@@ -208,7 +213,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     );
 
     const tabs = [
-        { key: "official", label: t("canvas.plugins.official"), children: officialTab },
+        { key: "registry", label: t("canvas.plugins.marketplace"), children: registryTab },
         ...(localPlugins.length > 0 ? [{ key: "local", label: t("canvas.plugins.local"), children: localTab }] : []),
         { key: "third", label: t("canvas.plugins.thirdParty"), children: thirdPartyTab },
     ];
@@ -220,7 +225,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
                     <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
                     <span>{t("canvas.plugins.warning")}</span>
                 </div>
-                <Tabs defaultActiveKey="official" items={tabs} />
+                <Tabs defaultActiveKey="registry" items={tabs} />
             </div>
         </Modal>
     );
