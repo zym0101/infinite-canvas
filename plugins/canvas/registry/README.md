@@ -21,7 +21,7 @@ registry/
 前端默认从下面地址读取(可用 `VITE_PLUGIN_REGISTRY_URL` 覆盖):
 
 ```
-https://cdn.jsdelivr.net/gh/basketikun/infinite-canvas@plugins-dist/official-plugins.json
+https://cdn.jsdelivr.net/gh/zym0101/infinite-canvas@plugins-dist/official-plugins.json
 ```
 
 清单里的官方条目使用相对 `entry`，前端会按清单地址解析为绝对 URL；推荐第三方条目使用固定版本 `url`，并保留 `license` 与 `repository` 供用户安装前核对。两类条目最终都走既有 URL 安装流程，但推荐第三方不会标记为官方插件。jsDelivr 对分支有缓存（约数小时），需要立即生效可对该分支目录做 purge。
